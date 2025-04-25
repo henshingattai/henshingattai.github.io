@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>De Bruijn Sequence Puzzle</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background-color: #111;
+      color: #ccc;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas {
+      background: #111;
+      display: block;
+    }
+    .scoreboard {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 10px;
+    }
+    .row {
+      display: flex;
+      gap: 4px;
+      justify-content: center;
+    }
+    .cell {
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      background-color: #003300;
+      color: #0f0;
+      font-size: 14px;
+    }
+    .lightgreen {
+      background-color: #00cc00;
+    }
+    .red {
+      background-color: #660000;
+    }
+    .controls {
+      margin-bottom: 10px;
+    }
+    input[type="number"] {
+      width: 50px;
+    }
+  </style>
+</head>
+<body>
+  <div class="controls" id="controls">
+    Difficulty (16–32): <input type="number" id="difficulty" min="16" max="32" value="32">
+    <button onclick="startGame()">OK</button>
+  </div>
+
+  <div class="scoreboard" id="scoreboard"></div>
+  <canvas id="gameCanvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const scoreboardDiv = document.getElementById("scoreboard");
+
+    const bits = [
+      "0000100110101111",
+      "1011000010011110",
+      "1110000101001101",
+      "0111101100001010"
+    ]; 
+
+    let gameBits = [];
+    let staticBits = new Set();
+    let interactiveBits = new Map();
+    let segmentPaths = [];
+
+    let outerRadius, centerX, centerY;
+    let gameWon = false;
+    let winAnimationStart = null;
+
+    function startGame() {
+      document.getElementById("controls").style.display = "none";
+
+      const size = Math.min(window.innerWidth, window.innerHeight - 140) * 0.95;
+      canvas.width = size;
+      canvas.height = size;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      outerRadius = canvas.width * 0.45;
+      centerX = canvas.width / 2;
+      centerY = canvas.height / 2;
+
+      const difficulty = parseInt(document.getElementById("difficulty").value);
+      gameBits = bits.map(b => b.split(""));
+      staticBits = new Set();
+      interactiveBits = new Map();
+      segmentPaths = [];
+
+      const blanks = new Set();
+      while (blanks.size < difficulty) {
+        blanks.add(Math.floor(Math.random() * 64));
+      }
+
+      for (let r = 0; r < 4; r++) {
+        for (let i = 0; i < 16; i++) {
+          const bit = gameBits[r][i];
+          const pos = r * 16 + i;
+          if (!blanks.has(pos)) {
+            staticBits.add(pos);
+          } else {
+            interactiveBits.set(pos, " ");
+          }
+        }
+      }
+      drawBoard();
+      drawScoreboard();
+    }
+
+    function drawBoard() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.font = "14px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const innerRadius = outerRadius * 0.33;
+      const ringWidth = (outerRadius - innerRadius) / 4;
+      segmentPaths = [];
+
+      for (let r = 0; r < 4; r++) {
+        const radius = outerRadius - r * ringWidth;
+        for (let i = 0; i < 16; i++) {
+          const startAngle = (Math.PI * 2 / 16) * i + Math.PI / 16;
+          const endAngle = startAngle + Math.PI * 2 / 16;
+          const inner = radius - ringWidth;
+
+          const path = new Path2D();
+          path.arc(centerX, centerY, radius, startAngle, endAngle);
+          path.arc(centerX, centerY, inner, endAngle, startAngle, true);
+          path.closePath();
+
+          segmentPaths.push({ path, r, i });
+
+          const pos = r * 16 + i;
+          ctx.fillStyle = staticBits.has(pos) ? "#333" : "#222";
+          ctx.fill(path);
+
+          let bit = staticBits.has(pos) ? gameBits[r][i] : interactiveBits.get(pos);
+          ctx.fillStyle = "#fff";
+          const angle = (startAngle + endAngle) / 2;
+          const textRadius = inner + ringWidth / 2;
+          const x = centerX + Math.cos(angle) * textRadius;
+          const y = centerY + Math.sin(angle) * textRadius + 5;
+          ctx.fillText(bit ?? " ", x , y);
+        }
+      }
+
+      const compassLabels = [
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
+      ];
+
+      ctx.fillStyle = "white";
+      for (let i = 0; i < 16; i++) {
+        const angle = (2 * Math.PI / 16) * i - Math.PI / 2;
+        const radius = outerRadius + 20;
+        const x = centerX + radius * Math.cos(angle);
+        const y = centerY + radius * Math.sin(angle);
+        ctx.fillText(compassLabels[i], x, y);
+      }
+    }
+
+    function drawScoreboard() {
+      scoreboardDiv.innerHTML = "";
+      const boardData = [[], [], [], [], []];
+      let allRowsFilled = true;
+
+      for (let r = 0; r < 4; r++) {
+        const seen = new Set();
+        const duplicates = new Set();
+        for (let i = 0; i < 16; i++) {
+          const bits = [];
+          for (let j = 0; j < 4; j++) {
+            const pos = r * 16 + (i + j) % 16;
+            const val = staticBits.has(pos) ? gameBits[r][(i + j) % 16] : interactiveBits.get(pos);
+            if (val === " ") {
+              allRowsFilled = false;
+              bits.length = 0;
+              break;
+            }
+            bits.push(val);
+          }
+          if (bits.length === 4) {
+            const value = parseInt(bits.join(""), 2);
+            if (seen.has(value)) duplicates.add(value);
+            seen.add(value);
+          }
+        }
+        for (let i = 0; i < 16; i++) {
+          const cell = document.createElement("div");
+          cell.classList.add("cell");
+          cell.textContent = i;
+          if (seen.has(i)) {
+            cell.classList.add(duplicates.has(i) ? "red" : "lightgreen");
+          } else {
+            allRowsFilled = false;
+          }
+          boardData[r].push(cell);
+        }
+      }
+
+      const columnSeen = new Set();
+      const columnDupes = new Set();
+      for (let i = 0; i < 16; i++) {
+        let bits = [];
+        for (let r = 0; r < 4; r++) {
+          const pos = r * 16 + i;
+          const val = staticBits.has(pos) ? gameBits[r][i] : interactiveBits.get(pos);
+          if (val === " ") {
+            allRowsFilled = false;
+            bits = [];
+            break;
+          }
+          bits.push(val);
+        }
+        if (bits.length === 4) {
+          const value = parseInt(bits.join(""), 2);
+          if (columnSeen.has(value)) columnDupes.add(value);
+          columnSeen.add(value);
+        }
+      }
+      for (let i = 0; i < 16; i++) {
+        const cell = document.createElement("div");
+        cell.classList.add("cell");
+        cell.textContent = i;
+        if (columnSeen.has(i)) {
+          cell.classList.add(columnDupes.has(i) ? "red" : "lightgreen");
+        } else {
+          allRowsFilled = false;
+        }
+        boardData[4].push(cell);
+      }
+
+      boardData.forEach(row => {
+        const div = document.createElement("div");
+        div.className = "row";
+        row.forEach(cell => div.appendChild(cell));
+        scoreboardDiv.appendChild(div);
+      });
+
+      if (allRowsFilled && !gameWon) {
+        gameWon = true;
+        winAnimationStart = null;
+        requestAnimationFrame(animateWinText);
+      }
+    }
+
+    function animateWinText(timestamp) {
+      if (!winAnimationStart) winAnimationStart = timestamp;
+      const progress = timestamp - winAnimationStart;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBoard();
+
+      const scale = Math.min(1, progress / 1000);
+      const fontSize = canvas.width * scale * 0.2;
+      ctx.font = `${fontSize}px sans-serif`;
+      ctx.fillStyle = "#0f0";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("YOU WIN!", centerX, centerY);
+
+      if (progress > 800) {
+        ctx.globalAlpha = Math.min(1, (progress - 800) / 500);
+        ctx.font = `${fontSize * 0.3}px sans-serif`;
+        ctx.fillText("Congratulations!", centerX, centerY + fontSize * 0.7);
+        ctx.globalAlpha = 1;
+      }
+
+      if (progress < 2000) {
+        requestAnimationFrame(animateWinText);
+      }
+    }
+
+    canvas.addEventListener("click", (e) => {
+      if (gameWon) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      for (let seg of segmentPaths) {
+        if (ctx.isPointInPath(seg.path, x, y)) {
+          const pos = seg.r * 16 + seg.i;
+          if (interactiveBits.has(pos)) {
+            const current = interactiveBits.get(pos);
+            interactiveBits.set(pos, current === "1" ? " " : current === "0" ? "1" : "0");
+            drawBoard();
+            drawScoreboard();
+          }
+          break;
+        }
+      }
+    });
+  </script>
+</body>
+</html>
